@@ -104,14 +104,6 @@ aws-dr-project/
 - Alarms for automatic failover triggers
 - Dashboards for visual monitoring
 
-## Key Learning Points for AWS SAA
-
-1. **DR Strategies**: Understand the four main strategies (Backup & Restore, Pilot Light, Warm Standby, Multi-Site Active/Active)
-2. **RTO/RPO**: Know how to calculate and optimize these metrics
-3. **Global Services**: DynamoDB Global Tables, S3 Cross-Region Replication
-4. **Infrastructure as Code**: CloudFormation for repeatable deployments
-5. **Monitoring**: CloudWatch metrics and alarms for DR readiness
-6. **Cost Optimization**: Using pilot light to minimize costs while maintaining readiness
 
 ## Free Tier Considerations
 
