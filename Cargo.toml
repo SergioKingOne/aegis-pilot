@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "lambda-functions/health-check",
+    "lambda-functions/backup-manager",
+    "lambda-functions/failover-controller",
+    "lambda-functions/data-validator",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+
+[workspace.dependencies]
+aws-config = { version = "1.6.3", features = ["behavior-version-latest"] }
+aws-sdk-dynamodb = "1.78.0"
+aws-sdk-s3 = "1.75.0"
+aws-sdk-cloudwatch = "1.70.0"
+tokio = { version = "1", features = ["full"] }
+lambda_runtime = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_dynamo = { version = "4.2", features = ["aws-sdk-dynamodb+1"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = "0.4"
+anyhow = "1.0"

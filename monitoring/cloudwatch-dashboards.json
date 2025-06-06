@@ -1,0 +1,133 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "DisasterRecovery", "DynamoDBHealth", { "stat": "Average", "region": "us-east-1" } ],
+          [ ".", ".", { "stat": "Average", "region": "us-west-2" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "DynamoDB Health by Region",
+        "period": 60,
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "max": 1
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "DisasterRecovery", "ReplicationLag", { "stat": "Average", "region": "us-east-1" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "DynamoDB Replication Lag (seconds)",
+        "period": 60,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Warning Threshold",
+              "value": 60,
+              "color": "#ff9900"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "DisasterRecovery", "DataReplicationMatchPercentage", "TableName", "dr-application-table", "SourceRegion", "us-east-1", "TargetRegion", "us-west-2", { "stat": "Average", "region": "us-east-1" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Data Consistency Check (%)",
+        "period": 300,
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Healthy Threshold",
+              "value": 99,
+              "color": "#2ca02c"
+            },
+            {
+              "label": "Warning Threshold",
+              "value": 90,
+              "color": "#ff9900"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 6,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "DisasterRecovery", "FailoverEvent", "Action", "failover", "TargetRegion", "us-west-2", { "stat": "SampleCount", "region": "us-east-1" } ],
+          [ "...", "failback", ".", "us-east-1", { "stat": "SampleCount", "region": "us-east-1" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Failover Events",
+        "period": 86400
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 12,
+      "width": 24,
+      "height": 2,
+      "properties": {
+        "markdown": "# Disaster Recovery Dashboard\n\nThis dashboard provides monitoring for the DR setup across primary (us-east-1) and DR (us-west-2) regions. It shows health status, replication lag, data consistency, and failover events."
+      }
+    },
+    {
+      "type": "alarm",
+      "x": 0,
+      "y": 14,
+      "width": 24,
+      "height": 6,
+      "properties": {
+        "title": "DR Health Alarms",
+        "alarms": [
+          "arn:aws:cloudwatch:us-east-1:123456789012:alarm:DR-HealthCheck-Failed",
+          "arn:aws:cloudwatch:us-east-1:123456789012:alarm:DR-ReplicationLag-High"
+        ]
+      }
+    }
+  ]
+} 

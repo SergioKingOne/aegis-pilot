@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Disaster Recovery Demo - Global Resources"
+
+Parameters:
+  PrimaryRegion:
+    Type: String
+    Default: us-east-1
+    Description: Primary AWS region for the DR setup
+
+  DRRegion:
+    Type: String
+    Default: us-west-2
+    Description: DR (Disaster Recovery) AWS region
+
+  DomainName:
+    Type: String
+    Default: example.com
+    Description: Domain name for routing (for demo purposes)
+
+Resources:
+  # Route53 Health Check for Primary Region
+  PrimaryRegionHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Port: 443
+        Type: HTTPS
+        ResourcePath: "/health"
+        FullyQualifiedDomainName: !Sub "api.${PrimaryRegion}.${DomainName}"
+        RequestInterval: 30
+        FailureThreshold: 3
+      HealthCheckTags:
+        - Key: Name
+          Value: !Sub "dr-demo-healthcheck-${PrimaryRegion}"
+
+  # Route53 Failover DNS Records
+  DNSRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${DomainName}."
+      Name: !Sub "api.${DomainName}."
+      Type: A
+      SetIdentifier: !Sub "dr-demo-primary-${PrimaryRegion}"
+      Region: !Ref PrimaryRegion
+      TTL: "60"
+      ResourceRecords:
+        - "192.0.2.1" # Placeholder IP - would be real in production
+      Failover: PRIMARY
+      HealthCheckId: !Ref PrimaryRegionHealthCheck
+
+  DRDNSRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${DomainName}."
+      Name: !Sub "api.${DomainName}."
+      Type: A
+      SetIdentifier: !Sub "dr-demo-dr-${DRRegion}"
+      Region: !Ref DRRegion
+      TTL: "60"
+      ResourceRecords:
+        - "192.0.2.2" # Placeholder IP - would be real in production
+      Failover: SECONDARY
+
+Outputs:
+  PrimaryRegionHealthCheckId:
+    Description: The ID of the primary region health check
+    Value: !Ref PrimaryRegionHealthCheck
+    Export:
+      Name: DR-PrimaryRegionHealthCheck

@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Disaster Recovery Demo - DR Region Resources (Pilot Light)"
+
+Parameters:
+  BackupBucketName:
+    Type: String
+    Default: dr-demo-backup-bucket-dr
+    Description: Name for the S3 backup bucket in DR region
+
+Resources:
+  # S3 Bucket for Backup Replication
+  DRBackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BackupBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldBackups
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: Purpose
+          Value: DisasterRecoveryDemo
+
+  # Minimal Lambda Execution Role
+  DRLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DRLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                  - s3:*
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+
+  # Minimal Health Check Function (Pilot Light)
+  DRHealthCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dr-health-check-standby
+      CodeUri: ../lambda-functions/health-check/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt DRLambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          RUST_LOG: info
+      ReservedConcurrentExecutions: 1 # Minimal capacity for pilot light
+
+Outputs:
+  DRBackupBucketName:
+    Value: !Ref DRBackupBucket
+    Export:
+      Name: DR-BackupBucket-DR

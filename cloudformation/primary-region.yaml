@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Disaster Recovery Demo - Primary Region Resources"
+
+Parameters:
+  BackupBucketName:
+    Type: String
+    Default: dr-demo-backup-bucket-primary
+    Description: Name for the S3 backup bucket
+
+Resources:
+  # DynamoDB Tables
+  ApplicationTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: dr-application-table
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      Tags:
+        - Key: Purpose
+          Value: DisasterRecoveryDemo
+
+  SentinelTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: dr-sentinel-table
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      Tags:
+        - Key: Purpose
+          Value: DisasterRecoveryDemo
+
+  BackupMetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: dr-backup-metadata
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: backup_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: backup_id
+          KeyType: HASH
+      Tags:
+        - Key: Purpose
+          Value: DisasterRecoveryDemo
+
+  # S3 Bucket for Backups
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BackupBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldBackups
+            Status: Enabled
+            ExpirationInDays: 30
+      ReplicationConfiguration:
+        Role: !GetAtt S3ReplicationRole.Arn
+        Rules:
+          - Id: ReplicateAllObjects
+            Status: Enabled
+            Priority: 1
+            Filter: {}
+            DeleteMarkerReplication:
+              Status: Disabled
+            Destination:
+              Bucket: !Sub "arn:aws:s3:::${BackupBucketName}-dr"
+              ReplicationTime:
+                Status: Enabled
+                Time:
+                  Minutes: 15
+              Metrics:
+                Status: Enabled
+                EventThreshold:
+                  Minutes: 15
+      Tags:
+        - Key: Purpose
+          Value: DisasterRecoveryDemo
+
+  # IAM Roles
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DRLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                  - s3:*
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+
+  S3ReplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: S3ReplicationPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetReplicationConfiguration
+                  - s3:ListBucket
+                Resource: !GetAtt BackupBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObjectVersionForReplication
+                  - s3:GetObjectVersionAcl
+                Resource: !Sub "${BackupBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ReplicateObject
+                  - s3:ReplicateDelete
+                Resource: !Sub "arn:aws:s3:::${BackupBucketName}-dr/*"
+
+  # Lambda Functions
+  HealthCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dr-health-check
+      CodeUri: ../lambda-functions/health-check/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          RUST_LOG: info
+      Events:
+        ScheduledCheck:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+
+  BackupManagerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dr-backup-manager
+      CodeUri: ../lambda-functions/backup-manager/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - x86_64
+      MemorySize: 256
+      Timeout: 300
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          BACKUP_BUCKET: !Ref BackupBucket
+          METADATA_TABLE: !Ref BackupMetadataTable
+          RUST_LOG: info
+      Events:
+        DailyBackup:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 day)
+            Input: |
+              {
+                "table_name": "dr-application-table",
+                "backup_type": "full"
+              }
+
+  FailoverControllerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dr-failover-controller
+      CodeUri: ../lambda-functions/failover-controller/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Timeout: 60
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          RUST_LOG: info
+
+  # CloudWatch Alarms
+  HealthCheckAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: DR-HealthCheck-Failed
+      AlarmDescription: Triggers when health check fails
+      MetricName: DynamoDBHealth
+      Namespace: DisasterRecovery
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0.5
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+
+  ReplicationLagAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: DR-ReplicationLag-High
+      AlarmDescription: Triggers when replication lag is too high
+      MetricName: ReplicationLag
+      Namespace: DisasterRecovery
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 60
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApplicationTableName:
+    Value: !Ref ApplicationTable
+    Export:
+      Name: DR-ApplicationTable
+
+  BackupBucketName:
+    Value: !Ref BackupBucket
+    Export:
+      Name: DR-BackupBucket
+
+  HealthCheckFunctionArn:
+    Value: !GetAtt HealthCheckFunction.Arn
+    Export:
+      Name: DR-HealthCheckFunction
