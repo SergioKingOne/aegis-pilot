@@ -17,6 +17,7 @@ fi
 
 # Create a temporary directory for the deployment packages
 DEPLOY_DIR="target/lambda-deploy"
+rm -rf $DEPLOY_DIR
 mkdir -p $DEPLOY_DIR
 
 # Function to build and package a Lambda function
@@ -36,8 +37,10 @@ package_lambda() {
     # Copy the binary to the package directory and rename it to bootstrap
     cp "target/release/$binary_name" "$package_dir/bootstrap"
     
-    # Create a zip file for deployment
-    (cd $package_dir && zip -j "$DEPLOY_DIR/$function_name.zip" bootstrap)
+    # Create a zip file for deployment - use absolute paths to avoid issues
+    cd $package_dir
+    zip -j "$(pwd)/../$function_name.zip" bootstrap
+    cd - > /dev/null
     
     echo -e "${GREEN}Successfully packaged ${function_name} to ${DEPLOY_DIR}/${function_name}.zip${NC}"
 }
