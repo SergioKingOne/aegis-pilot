@@ -19,5 +19,5 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 
 [[bin]]
-name = "bootstrap"
+name = "data-validator-bootstrap"
 path = "src/main.rs"

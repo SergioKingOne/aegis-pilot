@@ -1,4 +1,3 @@
-// lambda-functions/data-validator/src/main.rs
 use anyhow::Result;
 use aws_config::BehaviorVersion;
 use aws_sdk_cloudwatch::{types::MetricDatum, types::StandardUnit, Client as CloudWatchClient};
@@ -55,9 +54,12 @@ struct TableValidation {
 struct DataValidatorService {
     primary_dynamo: DynamoClient,
     dr_dynamo: DynamoClient,
+    #[allow(dead_code)]
     s3_client: S3Client,
     cloudwatch_client: CloudWatchClient,
+    #[allow(dead_code)]
     source_region: String,
+    #[allow(dead_code)]
     target_region: String,
 }
 

@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
+[lib]
+name = "failover_controller"
+path = "src/lib.rs"
+
+[[bin]]
+name = "failover-controller-bootstrap"
+path = "src/main.rs"
+
 [dependencies]
 aws-config = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
@@ -17,6 +25,6 @@ tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 
-[[bin]]
-name = "bootstrap"
-path = "src/main.rs"
+[dev-dependencies]
+mockall = "0.12"
+tokio-test = "0.4"
