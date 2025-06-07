@@ -36,9 +36,10 @@ aws dynamodb put-item \
 
 # Trigger health check
 echo "🏥 Running health check..."
+HEALTH_PAYLOAD=$(echo '{"region": "'${AWS_DEFAULT_REGION}'"}' | base64)
 aws lambda invoke \
     --function-name ${LAMBDA_HEALTH_CHECK} \
-    --payload '{"region": "'${AWS_DEFAULT_REGION}'"}' \
+    --payload "$HEALTH_PAYLOAD" \
     --region ${AWS_DEFAULT_REGION} \
     response.json
 
@@ -46,9 +47,10 @@ cat response.json | jq .
 
 # Simulate failover
 echo "🔄 Simulating failover to DR region..."
+FAILOVER_PAYLOAD=$(echo '{"action": "failover", "target_region": "'${AWS_DR_REGION}'"}' | base64)
 aws lambda invoke \
     --function-name ${LAMBDA_FAILOVER_CONTROLLER} \
-    --payload '{"action": "failover", "target_region": "'${AWS_DR_REGION}'"}' \
+    --payload "$FAILOVER_PAYLOAD" \
     --region ${AWS_DEFAULT_REGION} \
     failover-response.json
 

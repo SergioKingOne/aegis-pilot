@@ -45,7 +45,7 @@ Resources:
   BackupMetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: dr-backup-metadata
+      TableName: dr-backup-metadata-v2
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: backup_id
@@ -69,25 +69,7 @@ Resources:
           - Id: DeleteOldBackups
             Status: Enabled
             ExpirationInDays: 30
-      ReplicationConfiguration:
-        Role: !GetAtt S3ReplicationRole.Arn
-        Rules:
-          - Id: ReplicateAllObjects
-            Status: Enabled
-            Priority: 1
-            Filter: {}
-            DeleteMarkerReplication:
-              Status: Disabled
-            Destination:
-              Bucket: !Sub "arn:aws:s3:::${BackupBucketName}-dr"
-              ReplicationTime:
-                Status: Enabled
-                Time:
-                  Minutes: 15
-              Metrics:
-                Status: Enabled
-                EventThreshold:
-                  Minutes: 15
+      # Replication will be configured after DR bucket is created
       Tags:
         - Key: Purpose
           Value: DisasterRecoveryDemo
@@ -153,17 +135,18 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: dr-health-check
-      CodeUri: ../lambda-functions/health-check/
+      CodeUri: ../lambda-functions/health-check/target/lambda/health-check/
       Handler: bootstrap
       Runtime: provided.al2023
       Architectures:
-        - x86_64
+        - arm64
       MemorySize: 128
       Timeout: 30
       Role: !GetAtt LambdaExecutionRole.Arn
       Environment:
         Variables:
           RUST_LOG: info
+          BACKUP_BUCKET: !Ref BackupBucket
       Events:
         ScheduledCheck:
           Type: Schedule
@@ -174,11 +157,11 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: dr-backup-manager
-      CodeUri: ../lambda-functions/backup-manager/
+      CodeUri: ../lambda-functions/backup-manager/target/lambda/backup-manager/
       Handler: bootstrap
       Runtime: provided.al2023
       Architectures:
-        - x86_64
+        - arm64
       MemorySize: 256
       Timeout: 300
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -202,17 +185,34 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: dr-failover-controller
-      CodeUri: ../lambda-functions/failover-controller/
+      CodeUri: ../lambda-functions/failover-controller/target/lambda/failover-controller/
       Handler: bootstrap
       Runtime: provided.al2023
       Architectures:
-        - x86_64
+        - arm64
       MemorySize: 128
       Timeout: 60
       Role: !GetAtt LambdaExecutionRole.Arn
       Environment:
         Variables:
           RUST_LOG: info
+
+  DataValidatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dr-data-validator
+      CodeUri: ../lambda-functions/data-validator/target/lambda/data-validator/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 120
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          RUST_LOG: info
+          BACKUP_BUCKET: !Ref BackupBucket
 
   # CloudWatch Alarms
   HealthCheckAlarm:
@@ -258,3 +258,8 @@ Outputs:
     Value: !GetAtt HealthCheckFunction.Arn
     Export:
       Name: DR-HealthCheckFunction
+
+  S3ReplicationRoleArn:
+    Value: !GetAtt S3ReplicationRole.Arn
+    Export:
+      Name: DR-S3ReplicationRole

@@ -72,9 +72,9 @@ impl FailoverService {
     pub async fn update_failover_status(&self, to_region: &str, action: &str) -> Result<(), Error> {
         self.dynamo_client
             .put_item()
-            .table_name("dr-metadata")
+            .table_name("dr-backup-metadata")
             .item(
-                "id",
+                "backup_id",
                 aws_sdk_dynamodb::types::AttributeValue::S("failover_status".to_string()),
             )
             .item(

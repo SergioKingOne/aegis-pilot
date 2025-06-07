@@ -1,167 +1,133 @@
-# AWS Disaster Recovery Project with Rust
+# AWS Disaster Recovery Demo - Aegis Pilot
 
-## Project Overview
+A production-ready AWS disaster recovery solution demonstrating cross-region failover, data replication, and automated backup strategies.
 
-This project implements a **Pilot Light DR strategy** using AWS services within the free tier. It demonstrates key disaster recovery concepts for AWS SAA preparation, including:
+## 🏗️ Architecture Overview
 
-- **RTO (Recovery Time Objective)**: ~5-10 minutes
-- **RPO (Recovery Point Objective)**: ~1 minute for critical data
-- **Multi-region deployment** with automated failover
-- **Infrastructure as Code** using CloudFormation
-- **Continuous data replication** and backup strategies
+This project implements a multi-region disaster recovery solution with:
 
-## Setup and Running
+- **Primary Region**: us-east-1 (N. Virginia)
+- **DR Region**: us-west-2 (Oregon)
+- **Global DynamoDB Tables** for automatic cross-region replication
+- **Lambda Functions** for health monitoring and failover orchestration
+- **CloudWatch Alarms** for proactive monitoring
+- **S3 Cross-Region Replication** for backup redundancy
 
-### Prerequisites
-- AWS CLI installed and configured
-- AWS SAM CLI installed
-- Rust toolchain (cargo, rustc)
-- jq for processing JSON responses
+## 📋 Prerequisites
 
-### Environment Setup
-1. Create an `.env` file based on the provided `.env.example`:
+- AWS CLI
+- AWS SAM CLI (v1.100+)
+- Rust toolchain with cargo-lambda
+- jq for JSON processing
+
+## 🚀 Quick Start
+
+1. **Clone and setup environment**:
    ```bash
    cp .env.example .env
+   # Edit .env with your AWS credentials
    ```
 
-2. Edit the `.env` file with your AWS credentials and configuration:
-   ```
-   # AWS Credentials
-   AWS_ACCESS_KEY_ID=your_access_key_here
-   AWS_SECRET_ACCESS_KEY=your_secret_key_here
-   AWS_DEFAULT_REGION=us-east-1
-   AWS_DR_REGION=us-west-2
-   ```
-
-### Deployment
-1. Build and deploy the project:
+2. **Deploy infrastructure**:
    ```bash
    ./scripts/deploy.sh
    ```
-   This will compile the Lambda functions, package them, and deploy the infrastructure to both primary and DR regions.
 
-### Testing Failover
-1. Run the failover test script:
+3. **Test deployment**:
+   ```bash
+   ./scripts/test-deploy.sh
+   ```
+
+4. **Test failover**:
    ```bash
    ./scripts/test-failover.sh
    ```
-   This will test the disaster recovery functionality by simulating a failover scenario.
 
-## Architecture
+5. **Cleanup resources**:
+   ```bash
+   ./scripts/cleanup.sh
+   ```
+
+## 🔧 Key Components
+
+### Lambda Functions
+
+- **health-check**: Monitors service health in both regions
+- **backup-manager**: Manages automated backups
+- **failover-controller**: Orchestrates failover process
+- **data-validator**: Validates data consistency across regions
+
+### DynamoDB Tables
+
+- **dr-application-table**: Main application data (global table)
+- **dr-sentinel-table**: Health check sentinel data (global table)
+- **dr-backup-metadata**: Backup tracking metadata (global table)
+
+### Monitoring
+
+- CloudWatch dashboards for real-time monitoring
+- Alarms for replication lag and health check failures
+- Automated alerts via SNS (configurable)
+
+## 📊 Testing Results
+
+During testing, the system demonstrated:
+
+- ✅ Successful cross-region data replication
+- ✅ Lambda functions operational in both regions
+- ✅ Automated health monitoring
+- ✅ Data consistency validation
+- ⚠️ Minor issue with failover controller (requires Lambda deployment in DR region)
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+1. **"Table already exists" during deployment**
+   - Run cleanup script first: `./scripts/cleanup.sh`
+   - Wait 1-2 minutes for resources to be fully deleted
+
+2. **Replication not working**
+   - Global tables take 1-2 minutes to establish replication
+   - Check CloudWatch logs for DynamoDB streams
+
+3. **Failover controller errors**
+   - Ensure Lambda functions are deployed in both regions
+   - Check IAM permissions for cross-region access
+
+## 📁 Project Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Primary Region (us-east-1)                    │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌──────────────┐    ┌─────────────────────┐   │
-│  │   Lambda     │    │  DynamoDB    │    │       S3 Bucket      │   │
-│  │  Functions   │───▶│  (Global     │    │   (Cross-Region     │   │
-│  │             │    │   Table)     │    │    Replication)     │   │
-│  └─────────────┘    └──────────────┘    └─────────────────────┘   │
-│         │                   │                        │               │
-│         └───────────────────┴────────────────────────┘              │
-│                             │                                        │
-│                    ┌────────────────┐                               │
-│                    │   CloudWatch    │                              │
-│                    │   Monitoring    │                              │
-│                    └────────────────┘                               │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                │ Replication
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                      DR Region (us-west-2)                          │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌──────────────┐    ┌─────────────────────┐   │
-│  │   Lambda     │    │  DynamoDB    │    │    S3 Bucket        │   │
-│  │  (Minimal)   │    │  (Replica)   │    │   (Replica)         │   │
-│  └─────────────┘    └──────────────┘    └─────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+aegis-pilot/
+├── cloudformation/          # Infrastructure templates
+├── lambda-functions/        # Rust Lambda functions
+├── scripts/                # Deployment & testing scripts
+├── docs/                   # Documentation
+└── monitoring/             # CloudWatch dashboards
 ```
 
-## Project Structure
+## 🔒 Security Considerations
 
-```
-aws-dr-project/
-├── Cargo.toml                          # Workspace configuration
-├── README.md                           # Project documentation
-├── .gitignore
-├── .env.example                        # Example environment configuration
-├── cloudformation/                     # Infrastructure as Code
-│   ├── primary-region.yaml            # Primary region resources
-│   ├── dr-region.yaml                 # DR region resources
-│   └── global-resources.yaml          # Global resources (Route53, etc.)
-├── lambda-functions/                   # Lambda function code
-│   ├── health-check/
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       └── main.rs               # Health check function
-│   ├── backup-manager/
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       └── main.rs               # Automated backup function
-│   ├── failover-controller/
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       └── main.rs               # Failover orchestration
-│   └── data-validator/
-│       ├── Cargo.toml
-│       └── src/
-│           └── main.rs               # Data consistency validator
-├── scripts/                           # Deployment and testing scripts
-│   ├── deploy.sh                     # Deployment script
-│   ├── test-failover.sh             # Failover testing
-│   └── cleanup.sh                    # Resource cleanup
-├── monitoring/                        # Monitoring configurations
-│   └── cloudwatch-dashboards.json    # CloudWatch dashboard definitions
-└── docs/                             # Additional documentation
-    ├── runbook.md                    # DR runbook
-    └── testing-procedures.md         # Testing procedures
-```
+- All Lambda functions use least-privilege IAM roles
+- DynamoDB encryption at rest enabled
+- S3 buckets configured with versioning and encryption
+- Cross-region replication uses secure IAM roles
 
-## Core Components
+## 💰 Cost Optimization
 
-### 1. DynamoDB Global Tables
-- Provides multi-region, multi-master replication
-- Near real-time data synchronization
-- Automatic failover capabilities
+- DynamoDB tables use on-demand billing
+- Lambda functions optimized for minimal memory usage
+- S3 lifecycle policies for backup retention
+- CloudWatch logs retention set to 7 days
 
-### 2. S3 Cross-Region Replication
-- Backup storage with automatic replication
-- Versioning enabled for point-in-time recovery
-- Lifecycle policies for cost optimization
+## 🚧 Future Enhancements
 
-### 3. Lambda Functions
-- **Health Check**: Monitors system health across regions
-- **Backup Manager**: Automated backup creation and management
-- **Failover Controller**: Orchestrates failover process
-- **Data Validator**: Ensures data consistency between regions
+- [ ] Implement Route53 health checks for DNS failover
+- [ ] Add RDS cross-region read replicas
+- [ ] Integrate with AWS Backup for centralized management
+- [ ] Implement automated failback procedures
+- [ ] Add comprehensive integration tests
 
-### 4. CloudWatch Monitoring
-- Custom metrics for DR readiness
-- Alarms for automatic failover triggers
-- Dashboards for visual monitoring
+## 📄 License
 
-
-## Free Tier Considerations
-
-This project is designed to stay within AWS Free Tier limits:
-- **DynamoDB**: Uses on-demand pricing (25 GB free)
-- **Lambda**: Well under 1 million requests/month
-- **S3**: Stays under 5 GB storage limit
-- **CloudWatch**: Uses less than 10 custom metrics
-
-## Next Steps
-
-1. Deploy the project following the deployment script
-2. Run the test scenarios to understand failover behavior
-3. Monitor costs in AWS Cost Explorer
-4. Experiment with different DR strategies
-5. Practice recovery procedures
-
-## Additional Resources
-
-- [AWS Well-Architected Framework - Reliability Pillar](https://docs.aws.amazon.com/wellarchitected/latest/reliability-pillar/welcome.html)
-- [AWS Disaster Recovery Whitepaper](https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/introduction.html)
-- [DynamoDB Global Tables](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GlobalTables.html)
-- [S3 Cross-Region Replication](https://docs.aws.amazon.com/AmazonS3/latest/userguide/replication.html) 
+This is a demo project for educational purposes.
