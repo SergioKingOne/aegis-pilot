@@ -3,82 +3,210 @@ use aws_config::BehaviorVersion;
 use aws_sdk_cloudwatch::{types::MetricDatum, types::StandardUnit, Client as CloudWatchClient};
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoClient};
 use aws_sdk_s3::Client as S3Client;
+use bon::Builder;
 use chrono::Utc;
 use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use tracing::{error, info, warn};
 
-#[derive(Deserialize)]
-struct Request {
-    validation_type: Option<String>, // "full", "incremental", or "specific"
-    table_name: Option<String>,
-    source_region: Option<String>,
-    target_region: Option<String>,
-    action: Option<String>, // "validate" or "sync"
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ValidationMode {
+    Full,
+    Incremental,
+    Specific,
+}
+
+impl Default for ValidationMode {
+    fn default() -> Self {
+        Self::Incremental
+    }
+}
+
+impl fmt::Display for ValidationMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Full => write!(f, "full"),
+            Self::Incremental => write!(f, "incremental"),
+            Self::Specific => write!(f, "specific"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ActionType {
+    Validate,
+    Sync,
+}
+
+impl Default for ActionType {
+    fn default() -> Self {
+        Self::Validate
+    }
+}
+
+impl fmt::Display for ActionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Validate => write!(f, "validate"),
+            Self::Sync => write!(f, "sync"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AwsRegion(String);
+
+impl AwsRegion {
+    pub fn new(region: impl Into<String>) -> Self {
+        Self(region.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn default_source() -> Self {
+        Self("us-east-1".to_string())
+    }
+
+    fn default_target() -> Self {
+        Self("us-west-2".to_string())
+    }
+}
+
+impl Default for AwsRegion {
+    fn default() -> Self {
+        Self::default_source()
+    }
+}
+
+impl fmt::Display for AwsRegion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableName(String);
+
+impl TableName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for TableName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Builder, Deserialize)]
+#[builder(on(AwsRegion, into))]
+#[serde(rename_all = "snake_case")]
+pub struct ValidationRequest {
+    #[builder(default = ValidationMode::default())]
+    #[serde(default = "ValidationMode::default")]
+    pub validation_mode: ValidationMode,
+
+    pub table_name: Option<TableName>,
+
+    #[builder(default = AwsRegion::default_source())]
+    #[serde(default = "AwsRegion::default_source")]
+    pub source_region: AwsRegion,
+
+    #[builder(default = AwsRegion::default_target())]
+    #[serde(default = "AwsRegion::default_target")]
+    pub target_region: AwsRegion,
+
+    #[builder(default = ActionType::default())]
+    #[serde(default = "ActionType::default")]
+    pub action: ActionType,
+}
+
+#[derive(Builder, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ValidationResponse {
+    pub status: ValidationStatus,
+    pub validation_mode: ValidationMode,
+    pub timestamp: chrono::DateTime<Utc>,
+    pub results: ValidationResults,
+    pub recommendations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ValidationStatus {
+    Healthy,
+    Degraded,
+    Failed,
+}
+
+impl fmt::Display for ValidationStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Healthy => write!(f, "healthy"),
+            Self::Degraded => write!(f, "degraded"),
+            Self::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+#[derive(Builder, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ValidationResults {
+    pub tables_validated: usize,
+    pub records_checked: usize,
+    pub mismatches_found: usize,
+    pub replication_lag_seconds: Option<i64>,
+    pub backup_status: BackupStatus,
+    pub consistency_score: f64,
 }
 
 #[derive(Serialize)]
-struct Response {
-    status: String,
-    validation_type: String,
-    timestamp: String,
-    results: ValidationResults,
-    recommendations: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct ValidationResults {
-    tables_validated: usize,
-    records_checked: usize,
-    mismatches_found: usize,
-    replication_lag_seconds: Option<i64>,
-    backup_status: BackupStatus,
-    consistency_score: f64,
-}
-
-#[derive(Serialize)]
-struct BackupStatus {
-    last_backup_age_hours: Option<f64>,
-    backup_count: usize,
-    oldest_backup_days: Option<f64>,
+#[serde(rename_all = "snake_case")]
+pub struct BackupStatus {
+    pub last_backup_age_hours: Option<f64>,
+    pub backup_count: usize,
+    pub oldest_backup_days: Option<f64>,
 }
 
 #[derive(Debug)]
 struct TableValidation {
-    table_name: String,
+    table_name: TableName,
     primary_count: usize,
     dr_count: usize,
     sample_mismatches: Vec<String>,
 }
 
-struct DataValidatorService {
+pub struct DataValidatorService {
     primary_dynamo: DynamoClient,
     dr_dynamo: DynamoClient,
-    #[allow(dead_code)]
     s3_client: S3Client,
     cloudwatch_client: CloudWatchClient,
-    #[allow(dead_code)]
-    source_region: String,
-    #[allow(dead_code)]
-    target_region: String,
+    source_region: AwsRegion,
+    target_region: AwsRegion,
 }
 
 impl DataValidatorService {
-    async fn new(
-        source_region: Option<String>,
-        target_region: Option<String>,
-    ) -> Result<Self, Error> {
-        let source_region = source_region.unwrap_or_else(|| "us-east-1".to_string());
-        let target_region = target_region.unwrap_or_else(|| "us-west-2".to_string());
+    pub async fn new(source_region: AwsRegion, target_region: AwsRegion) -> Result<Self, Error> {
+        let source_region_str = source_region.0.clone();
+        let target_region_str = target_region.0.clone();
 
-        // Configure clients for both regions
         let primary_config = aws_config::defaults(BehaviorVersion::latest())
-            .region(aws_config::Region::new(source_region.clone()))
+            .region(aws_config::Region::new(source_region_str))
             .load()
             .await;
 
         let dr_config = aws_config::defaults(BehaviorVersion::latest())
-            .region(aws_config::Region::new(target_region.clone()))
+            .region(aws_config::Region::new(target_region_str))
             .load()
             .await;
 
@@ -92,24 +220,23 @@ impl DataValidatorService {
         })
     }
 
-    async fn get_table_item_count(&self, client: &DynamoClient, table_name: &str) -> Result<usize> {
+    async fn get_table_item_count(
+        &self,
+        client: &DynamoClient,
+        table_name: &TableName,
+    ) -> Result<usize> {
         let result = client
             .describe_table()
-            .table_name(table_name)
+            .table_name(table_name.as_str())
             .send()
             .await?;
 
-        if let Some(table) = result.table {
-            Ok(table.item_count.unwrap_or(0) as usize)
-        } else {
-            Ok(0)
-        }
+        Ok(result.table.and_then(|table| table.item_count).unwrap_or(0) as usize)
     }
 
-    async fn validate_table_data(&self, table_name: &str) -> Result<TableValidation> {
+    async fn validate_table_data(&self, table_name: &TableName) -> Result<TableValidation> {
         info!("Validating table: {}", table_name);
 
-        // Get item counts
         let primary_count = self
             .get_table_item_count(&self.primary_dynamo, table_name)
             .await?;
@@ -119,11 +246,10 @@ impl DataValidatorService {
 
         let mut sample_mismatches = Vec::new();
 
-        // Sample validation - check a few random items
         let scan_result = self
             .primary_dynamo
             .scan()
-            .table_name(table_name)
+            .table_name(table_name.as_str())
             .limit(10)
             .send()
             .await?;
@@ -132,11 +258,10 @@ impl DataValidatorService {
             for item in items.iter() {
                 if let Some(id_attr) = item.get("id") {
                     if let Ok(id) = id_attr.as_s() {
-                        // Check if item exists in DR
                         let dr_result = self
                             .dr_dynamo
                             .get_item()
-                            .table_name(table_name)
+                            .table_name(table_name.as_str())
                             .key("id", AttributeValue::S(id.to_string()))
                             .send()
                             .await;
@@ -157,7 +282,7 @@ impl DataValidatorService {
         }
 
         Ok(TableValidation {
-            table_name: table_name.to_string(),
+            table_name: table_name.clone(),
             primary_count,
             dr_count,
             sample_mismatches,
@@ -165,7 +290,6 @@ impl DataValidatorService {
     }
 
     async fn check_replication_lag(&self) -> Result<Option<i64>> {
-        // Write a timestamp to primary
         let test_id = format!("lag-test-{}", Utc::now().timestamp_millis());
         let timestamp = Utc::now().timestamp();
 
@@ -178,10 +302,8 @@ impl DataValidatorService {
             .send()
             .await?;
 
-        // Wait a bit for replication
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-        // Try to read from DR
         let start_time = Utc::now();
         let mut lag = None;
 
@@ -204,7 +326,6 @@ impl DataValidatorService {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
 
-        // Clean up test record
         let _ = self
             .primary_dynamo
             .delete_item()
@@ -220,7 +341,6 @@ impl DataValidatorService {
         let _bucket_name = std::env::var("BACKUP_BUCKET")
             .unwrap_or_else(|_| "dr-demo-backup-bucket-primary".to_string());
 
-        // Check backup metadata
         let scan_result = self
             .primary_dynamo
             .scan()
@@ -271,20 +391,17 @@ impl DataValidatorService {
 
     async fn sync_missing_items(
         &self,
-        _table_name: &str,
+        _table_name: &TableName,
         validation: &TableValidation,
     ) -> Result<usize> {
         let mut synced_count = 0;
 
-        // This is a simplified sync - in production, you'd want to handle this more carefully
         if validation.primary_count > validation.dr_count {
             info!(
                 "Syncing {} missing items",
                 validation.primary_count - validation.dr_count
             );
 
-            // For demo purposes, we'll just log this
-            // In a real implementation, you'd scan the primary table and sync missing items
             warn!(
                 "Sync operation would sync {} items to DR region",
                 validation.primary_count - validation.dr_count
@@ -305,7 +422,6 @@ impl DataValidatorService {
     ) -> Result<(), Error> {
         let timestamp = std::time::SystemTime::now();
 
-        // Create the metric
         let metric = MetricDatum::builder()
             .metric_name(metric_name)
             .value(value)
@@ -313,7 +429,6 @@ impl DataValidatorService {
             .timestamp(aws_sdk_cloudwatch::primitives::DateTime::from(timestamp))
             .build();
 
-        // Send the metric
         match self
             .cloudwatch_client
             .put_metric_data()
@@ -333,8 +448,7 @@ impl DataValidatorService {
     async fn publish_validation_metrics(&self, results: &ValidationResults) -> Result<()> {
         let namespace = "DisasterRecovery";
 
-        // Publish consistency score metric
-        match self
+        if let Err(e) = self
             .publish_single_metric(
                 namespace,
                 "ValidationConsistencyScore",
@@ -343,12 +457,10 @@ impl DataValidatorService {
             )
             .await
         {
-            Ok(_) => (),
-            Err(e) => error!("Failed to publish consistency score metric: {}", e),
+            error!("Failed to publish consistency score metric: {}", e);
         }
 
-        // Publish mismatches metric
-        match self
+        if let Err(e) = self
             .publish_single_metric(
                 namespace,
                 "ValidationMismatches",
@@ -357,8 +469,7 @@ impl DataValidatorService {
             )
             .await
         {
-            Ok(_) => (),
-            Err(e) => error!("Failed to publish mismatches metric: {}", e),
+            error!("Failed to publish mismatches metric: {}", e);
         }
 
         Ok(())
@@ -367,7 +478,6 @@ impl DataValidatorService {
     fn generate_recommendations(&self, results: &ValidationResults) -> Vec<String> {
         let mut recommendations = Vec::new();
 
-        // Check consistency score
         if results.consistency_score < 95.0 {
             recommendations.push(format!(
                 "Data consistency is below 95% ({:.1}%). Investigate mismatches immediately.",
@@ -375,7 +485,6 @@ impl DataValidatorService {
             ));
         }
 
-        // Check replication lag
         if let Some(lag) = results.replication_lag_seconds {
             if lag > 60 {
                 recommendations.push(format!(
@@ -385,7 +494,6 @@ impl DataValidatorService {
             }
         }
 
-        // Check backup age
         if let Some(age_hours) = results.backup_status.last_backup_age_hours {
             if age_hours > 24.0 {
                 recommendations.push(format!(
@@ -395,7 +503,6 @@ impl DataValidatorService {
             }
         }
 
-        // Check backup retention
         if let Some(oldest_days) = results.backup_status.oldest_backup_days {
             if oldest_days > 30.0 {
                 recommendations.push(format!(
@@ -412,23 +519,23 @@ impl DataValidatorService {
         recommendations
     }
 
-    async fn run_validation(
-        &self,
-        validation_type: &str,
-        table_name: Option<String>,
-        action: &str,
-    ) -> Result<Response, Error> {
-        // Determine which tables to validate
-        let tables_to_validate = if let Some(table_name) = table_name {
-            vec![table_name]
-        } else {
-            vec![
-                "dr-application-table".to_string(),
-                "dr-sentinel-table".to_string(),
-            ]
-        };
+    fn default_tables() -> Vec<TableName> {
+        vec![
+            TableName::new("dr-application-table"),
+            TableName::new("dr-sentinel-table"),
+        ]
+    }
 
-        // Perform validation
+    pub async fn run_validation(
+        &self,
+        validation_mode: &ValidationMode,
+        table_name: Option<TableName>,
+        action: &ActionType,
+    ) -> Result<ValidationResponse, Error> {
+        let tables_to_validate = table_name
+            .map(|name| vec![name])
+            .unwrap_or_else(Self::default_tables);
+
         let mut total_mismatches = 0;
         let mut total_records = 0;
         let mut validations = Vec::new();
@@ -441,7 +548,7 @@ impl DataValidatorService {
                         + validation.sample_mismatches.len();
                     total_mismatches += mismatches;
 
-                    if action == "sync" && mismatches > 0 {
+                    if *action == ActionType::Sync && mismatches > 0 {
                         if let Ok(synced) = self.sync_missing_items(table_name, &validation).await {
                             info!("Synced {} items for table {}", synced, table_name);
                         }
@@ -455,17 +562,17 @@ impl DataValidatorService {
             }
         }
 
-        // Check replication lag
         let replication_lag = self.check_replication_lag().await.unwrap_or(None);
 
-        // Validate backups
-        let backup_status = self.validate_backups().await.unwrap_or(BackupStatus {
-            last_backup_age_hours: None,
-            backup_count: 0,
-            oldest_backup_days: None,
-        });
+        let backup_status = self
+            .validate_backups()
+            .await
+            .unwrap_or_else(|_| BackupStatus {
+                last_backup_age_hours: None,
+                backup_count: 0,
+                oldest_backup_days: None,
+            });
 
-        // Calculate consistency score
         let consistency_score = if total_records > 0 {
             ((total_records - total_mismatches) as f64 / total_records as f64) * 100.0
         } else {
@@ -481,15 +588,12 @@ impl DataValidatorService {
             consistency_score,
         };
 
-        // Publish metrics
         if let Err(e) = self.publish_validation_metrics(&results).await {
             error!("Failed to publish metrics: {}", e);
         }
 
-        // Generate recommendations
         let recommendations = self.generate_recommendations(&results);
 
-        // Log validation summary
         info!(
             "Validation complete: {} tables, {} records, {:.1}% consistency",
             results.tables_validated, results.records_checked, results.consistency_score
@@ -504,36 +608,37 @@ impl DataValidatorService {
             }
         }
 
-        Ok(Response {
-            status: if results.consistency_score >= 95.0 {
-                "healthy"
-            } else {
-                "degraded"
-            }
-            .to_string(),
-            validation_type: validation_type.to_string(),
-            timestamp: Utc::now().to_rfc3339(),
-            results,
-            recommendations,
-        })
+        let status = if results.consistency_score >= 95.0 {
+            ValidationStatus::Healthy
+        } else {
+            ValidationStatus::Degraded
+        };
+
+        Ok(ValidationResponse::builder()
+            .status(status)
+            .validation_mode(validation_mode.clone())
+            .timestamp(Utc::now())
+            .results(results)
+            .recommendations(recommendations)
+            .build())
     }
 }
 
-async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error> {
-    let validation_type = event
-        .payload
-        .validation_type
-        .unwrap_or_else(|| "incremental".to_string());
-    let action = event
-        .payload
-        .action
-        .unwrap_or_else(|| "validate".to_string());
+async fn function_handler(
+    event: LambdaEvent<ValidationRequest>,
+) -> Result<ValidationResponse, Error> {
+    let request = event.payload;
 
     let service =
-        DataValidatorService::new(event.payload.source_region, event.payload.target_region).await?;
+        DataValidatorService::new(request.source_region.clone(), request.target_region.clone())
+            .await?;
 
     service
-        .run_validation(&validation_type, event.payload.table_name, &action)
+        .run_validation(
+            &request.validation_mode,
+            request.table_name,
+            &request.action,
+        )
         .await
 }
 
