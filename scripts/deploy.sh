@@ -15,6 +15,15 @@ if [ ! -f "Cargo.toml" ]; then
     exit 1
 fi
 
+# Load environment variables from .env file
+if [ -f .env ]; then
+    echo -e "${YELLOW}Loading configuration from .env file...${NC}"
+    export $(cat .env | grep -v '#' | xargs)
+else
+    echo -e "${RED}Warning: .env file not found. Using default configuration.${NC}"
+    echo -e "${YELLOW}You can create a .env file based on .env.example${NC}"
+fi
+
 # Create a temporary directory for the deployment packages
 DEPLOY_DIR="target/lambda-deploy"
 rm -rf $DEPLOY_DIR
@@ -62,35 +71,56 @@ echo -e "aws lambda update-function-code --function-name FUNCTION_NAME --zip-fil
 echo -e "\n${YELLOW}Example:${NC}"
 echo -e "aws lambda update-function-code --function-name backup-manager --zip-file fileb://${DEPLOY_DIR}/backup-manager.zip"
 
+# Set AWS credentials from environment variables
+if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
+    echo -e "${YELLOW}Using AWS credentials from .env file...${NC}"
+    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+    export AWS_DR_REGION=${AWS_DR_REGION:-us-west-2}
+    PRIMARY_STACK_NAME=${PRIMARY_STACK_NAME:-dr-demo-primary}
+    DR_STACK_NAME=${DR_STACK_NAME:-dr-demo-dr}
+    DYNAMODB_APP_TABLE=${DYNAMODB_APP_TABLE:-dr-application-table}
+    DYNAMODB_SENTINEL_TABLE=${DYNAMODB_SENTINEL_TABLE:-dr-sentinel-table}
+else
+    echo -e "${YELLOW}Using AWS credentials from environment or AWS CLI configuration...${NC}"
+    AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+    AWS_DR_REGION=${AWS_DR_REGION:-us-west-2}
+    PRIMARY_STACK_NAME=${PRIMARY_STACK_NAME:-dr-demo-primary}
+    DR_STACK_NAME=${DR_STACK_NAME:-dr-demo-dr}
+    DYNAMODB_APP_TABLE=${DYNAMODB_APP_TABLE:-dr-application-table}
+    DYNAMODB_SENTINEL_TABLE=${DYNAMODB_SENTINEL_TABLE:-dr-sentinel-table}
+fi
+
 # Deploy Primary Region
-echo "☁️ Deploying Primary Region (us-east-1)..."
+echo "☁️ Deploying Primary Region (${AWS_DEFAULT_REGION})..."
 sam deploy \
     --template-file cloudformation/primary-region.yaml \
-    --stack-name dr-demo-primary \
+    --stack-name ${PRIMARY_STACK_NAME} \
     --capabilities CAPABILITY_IAM \
-    --region us-east-1 \
+    --region ${AWS_DEFAULT_REGION} \
     --resolve-s3
 
 # Deploy DR Region
-echo "☁️ Deploying DR Region (us-west-2)..."
+echo "☁️ Deploying DR Region (${AWS_DR_REGION})..."
 sam deploy \
     --template-file cloudformation/dr-region.yaml \
-    --stack-name dr-demo-dr \
+    --stack-name ${DR_STACK_NAME} \
     --capabilities CAPABILITY_IAM \
-    --region us-west-2 \
+    --region ${AWS_DR_REGION} \
     --resolve-s3
 
 # Enable Global Tables
 echo "🌐 Configuring DynamoDB Global Tables..."
 aws dynamodb create-global-table \
-    --global-table-name dr-application-table \
-    --replication-group RegionName=us-east-1 RegionName=us-west-2 \
-    --region us-east-1 || true
+    --global-table-name ${DYNAMODB_APP_TABLE} \
+    --replication-group RegionName=${AWS_DEFAULT_REGION} RegionName=${AWS_DR_REGION} \
+    --region ${AWS_DEFAULT_REGION} || true
 
 aws dynamodb create-global-table \
-    --global-table-name dr-sentinel-table \
-    --replication-group RegionName=us-east-1 RegionName=us-west-2 \
-    --region us-east-1 || true
+    --global-table-name ${DYNAMODB_SENTINEL_TABLE} \
+    --replication-group RegionName=${AWS_DEFAULT_REGION} RegionName=${AWS_DR_REGION} \
+    --region ${AWS_DEFAULT_REGION} || true
 
 echo "✅ Deployment complete!"
 echo "📊 View CloudWatch Dashboard: https://console.aws.amazon.com/cloudwatch/"

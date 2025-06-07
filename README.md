@@ -10,6 +10,43 @@ This project implements a **Pilot Light DR strategy** using AWS services within 
 - **Infrastructure as Code** using CloudFormation
 - **Continuous data replication** and backup strategies
 
+## Setup and Running
+
+### Prerequisites
+- AWS CLI installed and configured
+- AWS SAM CLI installed
+- Rust toolchain (cargo, rustc)
+- jq for processing JSON responses
+
+### Environment Setup
+1. Create an `.env` file based on the provided `.env.example`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit the `.env` file with your AWS credentials and configuration:
+   ```
+   # AWS Credentials
+   AWS_ACCESS_KEY_ID=your_access_key_here
+   AWS_SECRET_ACCESS_KEY=your_secret_key_here
+   AWS_DEFAULT_REGION=us-east-1
+   AWS_DR_REGION=us-west-2
+   ```
+
+### Deployment
+1. Build and deploy the project:
+   ```bash
+   ./scripts/deploy.sh
+   ```
+   This will compile the Lambda functions, package them, and deploy the infrastructure to both primary and DR regions.
+
+### Testing Failover
+1. Run the failover test script:
+   ```bash
+   ./scripts/test-failover.sh
+   ```
+   This will test the disaster recovery functionality by simulating a failover scenario.
+
 ## Architecture
 
 ```
@@ -49,6 +86,7 @@ aws-dr-project/
 ├── Cargo.toml                          # Workspace configuration
 ├── README.md                           # Project documentation
 ├── .gitignore
+├── .env.example                        # Example environment configuration
 ├── cloudformation/                     # Infrastructure as Code
 │   ├── primary-region.yaml            # Primary region resources
 │   ├── dr-region.yaml                 # DR region resources

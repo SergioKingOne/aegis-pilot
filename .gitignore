@@ -29,3 +29,15 @@ Cargo.lock
 # Node.js (if using CDK)
 node_modules/
 npm-debug.log
+
+# AWS files
+.aws/
+cloudformation/packaged.yaml
+
+# Runtime data
+*.log
+logs/
+*.log.*
+
+# OS specific files
+Thumbs.db
